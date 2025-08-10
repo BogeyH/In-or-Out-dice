@@ -319,6 +319,8 @@ function Game(){
   const [turnDone, setTurnDone] = useState(false);
   const [inFlag, setInFlag] = useState(false);
   const [turnScore, setTurnScore] = useState(0);
+
+  // REROLL GATE: must increase held count between rolls
   const [lastHeldCount, setLastHeldCount] = useState(0);
 
   // tiebreaker
@@ -354,20 +356,24 @@ function Game(){
     setInFlag(false);
     setTurnScore(0);
     setRolling(false);
-    setLastHeldCount(0);
+    setLastHeldCount(0); // reset gate for new turn
   }
 
   function roll(){
     const heldCount = held.filter(Boolean).length;
+
+    // Hard runtime guard
     if(!firstRoll && heldCount <= lastHeldCount){
       showToast("Hold at least one new die", "warn", 1000);
       return;
     }
+
     setRolling(true);
     setTimeout(()=>{
       setDice(prev => prev.map((v,i)=> held[i] ? v : randInt(1,6)));
       setFirstRoll(false);
       setRolling(false);
+      // Update the baseline AFTER dice resolve
       setLastHeldCount(held.filter(Boolean).length);
     }, 700);
   }
@@ -501,11 +507,14 @@ function Game(){
 
   const alivePlayers = players.filter(p=>!p.eliminated);
   const currentPlayer = players[current];
+
+  // Button gate mirrors runtime guard
   const heldCount = held.filter(Boolean).length;
   const canReroll = firstRoll || heldCount > lastHeldCount;
-  const topOfOrder = order[order.length-1];
 
   if(phase==="setup"){ return <Setup onStart={start} /> }
+
+  const topOfOrder = order[order.length-1];
 
   return (
     <div className="space-y-4">
