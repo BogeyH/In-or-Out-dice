@@ -81,11 +81,9 @@ const { useState, useMemo, useRef, useEffect } = React;
 const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
 function scoreDice(values){
-  // In = at least one 1 and one 4
   const has1 = values.includes(1);
   const has4 = values.includes(4);
   if(!has1 || !has4) return {in:false, score:0};
-  // Score = sum minus one 1 and one 4
   const sum = values.reduce((a,b)=>a+b,0);
   return {in:true, score: sum - 1 - 4};
 }
@@ -100,7 +98,6 @@ function sortOrderByRoundScores(players, roundScores){
     .map((p,i)=>({i,alive:!p.eliminated}))
     .filter(x=>x.alive)
     .map(x=>x.i);
-  // Highest scorer goes last next round. We want ascending turn order with last being highest.
   const scored = aliveIdxs.map(i=>({i, score: roundScores[i] ?? 0}));
   scored.sort((a,b)=>a.score - b.score);
   return scored.map(x=>x.i);
@@ -250,7 +247,6 @@ function SuspenseOverlay({ text }){
 }
 
 function Victory({ winner, onReset }){
-  // simple confetti
   const pieces = Array.from({length: 80});
   return (
     <div className="fixed inset-0 z-40 grid place-items-center">
@@ -293,6 +289,7 @@ function Game(){
   const [turnDone, setTurnDone] = useState(false);
   const [inFlag, setInFlag] = useState(false);
   const [turnScore, setTurnScore] = useState(0);
+  const [lastHeldCount, setLastHeldCount] = useState(0); // NEW: must increase before each re-roll
 
   // tiebreaker
   const [tieGroup, setTieGroup] = useState([]); // indices
@@ -318,20 +315,23 @@ function Game(){
     setInFlag(false);
     setTurnScore(0);
     setRolling(false);
+    setLastHeldCount(0); // reset gating
   }
 
   function roll(){
-    // must keep at least one die each roll unless firstRoll
-    if(!firstRoll && held.filter(h=>h).length===0){
-      alert("Keep at least one die before rolling.");
+    const heldCount = held.filter(Boolean).length;
+    // After the first roll, require at least one NEW die held since last roll
+    if(!firstRoll && heldCount <= lastHeldCount){
+      alert("Select at least one new die before rolling again.");
       return;
     }
     setRolling(true);
-    // jitter then resolve
     setTimeout(()=>{
       setDice(prev => prev.map((v,i)=> held[i] ? v : randInt(1,6)));
       setFirstRoll(false);
       setRolling(false);
+      // lock current held count as the baseline for the next roll
+      setLastHeldCount(held.filter(Boolean).length);
     }, 700);
   }
 
@@ -359,42 +359,34 @@ function Game(){
   }
 
   function endTurn(){
-    // mark score
     const pid = current;
     const newRoundScores = { ...lastRoundScores, [pid]: turnScore };
     setLastRoundScores(newRoundScores);
 
-    // next player or end round
     const nextIdx = nextIndex(pid, order);
     const isLastOfRound = nextIdx === order[0];
 
     if(isLastOfRound){
-      // round end: evaluate elimination or tie-break
-      const alive = players.map((p,i)=>({i, alive:!p.eliminated}));
-      const aliveIdx = alive.filter(x=>x.alive).map(x=>x.i);
+      const aliveIdx = players.map((p,i)=>!p.eliminated ? i : null).filter(i=>i!==null);
       const scores = aliveIdx.map(i=>({i, s:newRoundScores[i] ?? 0}));
       const minScore = Math.min(...scores.map(x=>x.s));
       const lowest = scores.filter(x=>x.s===minScore).map(x=>x.i);
 
-      // set tentative next round order based on scores
       const newOrder = sortOrderByRoundScores(players, newRoundScores);
       setOrder(newOrder);
 
       if(lowest.length>1){
-        // tie-breaker
         setTieGroup(lowest);
         setTieScores({});
         setPhase("tiebreak");
         resetTurnFor(lowest[0]);
       } else {
-        // eliminate one with suspense
         const outIdx = lowest[0];
         setPhase("suspense");
         setTimeout(()=>{
-          // Build next order from this round's scores, excluding the eliminated player
           const nextOrder = scores
             .filter(x => x.i !== outIdx)
-            .sort((a, b) => a.s - b.s)   // highest goes last
+            .sort((a, b) => a.s - b.s)
             .map(x => x.i);
           setOrder(nextOrder);
 
@@ -408,7 +400,6 @@ function Game(){
           if(remaining<=1){
             setPhase("victory");
           } else {
-            // next round
             setRound(r=>r+1);
             setLastRoundScores({});
             setPhase("round");
@@ -417,7 +408,6 @@ function Game(){
         }, 1200);
       }
     } else {
-      // next player's turn
       resetTurnFor(nextIdx);
     }
   }
@@ -434,12 +424,10 @@ function Game(){
     if(hasNext){
       resetTurnFor(tieGroup[idxInTie+1]);
     } else {
-      // compare results
       const items = tieGroup.map(i=>({i, s:newTS[i] ?? 0}));
       const minS = Math.min(...items.map(x=>x.s));
       const cand = items.filter(x=>x.s===minS).map(x=>x.i);
       if(cand.length===1){
-        // eliminate cand[0]
         const eliminatedIdx = cand[0];
         setPhase("suspense");
         setTimeout(()=>{
@@ -449,7 +437,6 @@ function Game(){
             return copy;
           });
 
-          // Next round order = remaining players sorted by last round scores (highest last)
           const nextOrder = order
             .filter(i => i !== eliminatedIdx)
             .map(i => ({ i, score: lastRoundScores[i] ?? 0 }))
@@ -467,7 +454,6 @@ function Game(){
           }
         }, 1000);
       } else {
-        // tie persists. repeat among cand
         setTieGroup(cand);
         setTieScores({});
         resetTurnFor(cand[0]);
@@ -489,12 +475,14 @@ function Game(){
     setHeld([]);
     setFirstRoll(true);
     setTurnDone(false);
+    setLastHeldCount(0);
   }
 
   // derived
   const alivePlayers = players.filter(p=>!p.eliminated);
   const currentPlayer = players[current];
-  const hasHold = held.some(Boolean); // <- for re-roll gating
+  const heldCount = held.filter(Boolean).length;
+  const canReroll = firstRoll || heldCount > lastHeldCount; // button gate
 
   if(phase==="setup"){
     return <Setup onStart={start} />
@@ -542,7 +530,7 @@ function Game(){
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button
               onClick={roll}
-              disabled={rolling || turnDone || (!firstRoll && !hasHold)}
+              disabled={rolling || turnDone || !canReroll}
               className={`rounded-2xl py-3 font-semibold ${turnDone?'btn-outline opacity-60':'btn'} disabled:opacity-60`}>
               {firstRoll ? "Roll" : "Re-roll"}
             </button>
@@ -616,3 +604,4 @@ root.render(<App/>);
   </script>
 </body>
 </html>
+
