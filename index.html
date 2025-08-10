@@ -26,38 +26,14 @@
               '50%': { transform: 'translate(2px,-1px) rotate(4deg)' },
               '75%': { transform: 'translate(-1px,2px) rotate(-2deg)' },
             },
-            pop: {
-              '0%': { transform: 'scale(0.8)', opacity: 0 },
-              '60%': { transform: 'scale(1.05)', opacity: 1 },
-              '100%': { transform: 'scale(1)' },
-            },
-            confetti: {
-              '0%': { transform: 'translateY(-20vh) rotate(0deg)' , opacity: 1 },
-              '100%': { transform: 'translateY(120vh) rotate(540deg)', opacity: 1 },
-            },
-            pulseSoft: {
-              '0%': { transform:'scale(1)' },
-              '50%': { transform:'scale(1.03)' },
-              '100%': { transform:'scale(1)' }
-            },
-            slideUp: {
-              '0%': { transform:'translateY(16px)', opacity:0 },
-              '100%': { transform:'translateY(0)', opacity:1 }
-            },
-            shake: {
-              '0%,100%': { transform:'translateX(0)' },
-              '25%': { transform:'translateX(-6px)' },
-              '50%': { transform:'translateX(6px)' },
-              '75%': { transform:'translateX(-3px)' }
-            },
-            barGrow: {
-              '0%': { width:'0%' },
-              '100%': { width:'100%' }
-            },
-            raysSpin: {
-              '0%': { transform:'rotate(0deg)' },
-              '100%': { transform:'rotate(360deg)' }
-            }
+            pop: { '0%': { transform:'scale(0.8)', opacity:0 }, '60%': { transform:'scale(1.05)', opacity:1 }, '100%': { transform:'scale(1)' } },
+            confetti: { '0%': { transform:'translateY(-20vh) rotate(0deg)' }, '100%': { transform:'translateY(120vh) rotate(540deg)' } },
+            pulseSoft: { '0%': { transform:'scale(1)' }, '50%': { transform:'scale(1.03)' }, '100%': { transform:'scale(1)' } },
+            slideUp: { '0%': { transform:'translateY(16px)', opacity:0 }, '100%': { transform:'translateY(0)', opacity:1 } },
+            shake: { '0%,100%': { transform:'translateX(0)' }, '25%': { transform:'translateX(-6px)' }, '50%': { transform:'translateX(6px)' }, '75%': { transform:'translateX(-3px)' } },
+            barGrow: { '0%': { width:'0%' }, '100%': { width:'100%' } },
+            raysSpin: { '0%': { transform:'rotate(0deg)' }, '100%': { transform:'rotate(360deg)' } },
+            caretBlink: { '0%,100%': { opacity:1 }, '50%': { opacity:0 } }
           },
           animation: {
             jitter: 'jitter 0.7s ease-in-out',
@@ -67,7 +43,8 @@
             slideUp: 'slideUp 240ms ease-out',
             shake: 'shake 480ms ease-in-out',
             barGrow: 'barGrow var(--bar-ms,1200ms) linear forwards',
-            raysSpin: 'raysSpin 10s linear infinite'
+            raysSpin: 'raysSpin 10s linear infinite',
+            caretBlink: 'caretBlink 1s step-end infinite'
           }
         }
       }
@@ -94,12 +71,11 @@
     .bracket-item.out { opacity: .45; text-decoration: line-through; }
     .badge { border:1px solid rgba(253,245,217,0.25); background: rgba(253,245,217,0.08); }
     .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 20px; z-index:50; }
-    .rayplate {
-      position:absolute; inset:-50vmin; opacity:.18; pointer-events:none;
-      background:
-        repeating-conic-gradient(from 0deg, var(--gold) 0 8deg, transparent 8deg 16deg);
+    .rayplate { position:absolute; inset:-50vmin; opacity:.18; pointer-events:none;
+      background: repeating-conic-gradient(from 0deg, var(--gold) 0 8deg, transparent 8deg 16deg);
       mask: radial-gradient(circle at center, transparent 0 20vmin, black 21vmin 100%);
     }
+    .type-line { display:inline-block; border-right: 2px solid var(--cream); }
   </style>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -259,13 +235,32 @@ function Toast({ msg, tone }) {
   );
 }
 
-function LoserReveal({ name, onComplete, durationMs=1600 }){
+/* UPDATED: Longer loser screen, dice roll +2000ms, typewriter message */
+function LoserReveal({ name, onComplete, rollMs=2800, totalMs=5200 }){
   const [showFinal, setShowFinal] = useState(false);
+  const [typed, setTyped] = useState("");
+  const full = "better luck next time";
+
   useEffect(()=>{
-    const t1 = setTimeout(()=>setShowFinal(true), durationMs * 0.55); // stop jitter to show 1+1
-    const t2 = setTimeout(()=>onComplete?.(), durationMs);
-    return ()=>{ clearTimeout(t1); clearTimeout(t2); }
-  }, [durationMs, onComplete]);
+    // Stop rolling and show double ones after rollMs
+    const t1 = setTimeout(()=>setShowFinal(true), rollMs);
+
+    // Start typewriter shortly after dice land
+    const tTypeStart = setTimeout(()=>{
+      let i = 0;
+      const interval = setInterval(()=>{
+        i++;
+        setTyped(full.slice(0, i));
+        if(i >= full.length) clearInterval(interval);
+      }, 50); // type speed
+    }, rollMs + 120);
+
+    // Keep screen up until totalMs, then complete
+    const t2 = setTimeout(()=>onComplete?.(), totalMs);
+
+    return ()=>{ clearTimeout(t1); clearTimeout(tTypeStart); clearTimeout(t2); };
+  }, [rollMs, totalMs, onComplete]);
+
   return (
     <div className="fixed inset-0 z-40 suspense-bg grid place-items-center">
       <div className="text-center animate-pop">
@@ -275,7 +270,10 @@ function LoserReveal({ name, onComplete, durationMs=1600 }){
           <DiceFace value={1} rolling={!showFinal} />
           <DiceFace value={1} rolling={!showFinal} />
         </div>
-        <div className="text-sm opacity-80">Double ones. See you next round.</div>
+        <div className="text-sm opacity-90">
+          <span className="type-line">{typed}</span>
+          <span className="animate-caretBlink ml-0.5">|</span>
+        </div>
       </div>
     </div>
   );
@@ -327,10 +325,10 @@ function Game(){
   const [inFlag, setInFlag] = useState(false);
   const [turnScore, setTurnScore] = useState(0);
 
-  // REROLL GATE
+  // Re-roll gate
   const [lastHeldCount, setLastHeldCount] = useState(0);
 
-  // tie + elimination reveal
+  // tie + elimination
   const [tieGroup, setTieGroup] = useState([]);
   const [tieScores, setTieScores] = useState({});
   const [loserIdx, setLoserIdx] = useState(null);
@@ -416,7 +414,6 @@ function Game(){
       const minScore = Math.min(...scores.map(x=>x.s));
       const lowest = scores.filter(x=>x.s===minScore).map(x=>x.i);
 
-      // next round order based on scores (highest last)
       const newOrder = sortOrderByRoundScores(players, newRoundScores);
 
       if(lowest.length>1){
@@ -427,11 +424,10 @@ function Game(){
         resetTurnFor(lowest[0]);
       } else {
         const outIdx = lowest[0];
-        // Build next order excluding loser; store for after reveal
         const nextOrder = scores.filter(x => x.i !== outIdx).sort((a,b)=>a.s - b.s).map(x => x.i);
         setPendingNextOrder(nextOrder);
         setLoserIdx(outIdx);
-        setPhase("eliminate");  // Show animated loser reveal
+        setPhase("eliminate");
       }
     } else {
       resetTurnFor(nextIdx);
@@ -515,8 +511,6 @@ function Game(){
 
   const alivePlayers = players.filter(p=>!p.eliminated);
   const currentPlayer = players[current];
-
-  // Button gate mirrors runtime guard
   const heldCount = held.filter(Boolean).length;
   const canReroll = firstRoll || heldCount > lastHeldCount;
 
@@ -617,7 +611,8 @@ function Game(){
         <LoserReveal
           name={players[loserIdx]?.name ?? "Player"}
           onComplete={completeElimination}
-          durationMs={1600}
+          rollMs={2800}     <!-- dice roll lasts ~2s longer -->
+          totalMs={5200}    <!-- screen stays up longer -->
         />
       )}
 
