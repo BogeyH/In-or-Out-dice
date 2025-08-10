@@ -196,13 +196,12 @@ function Setup({ onStart }){
   );
 }
 
-function Dice({ value, held, empty, onToggle, rolling }){
+function DiceFace({ value=1, rolling=false }){
   const pipMap = {1:[5],2:[1,9],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9]};
   return (
-    <div onClick={onToggle}
-      className={`die ${held?'held':''} ${empty?'empty':''} ${rolling?'animate-jitter':''} cursor-pointer select-none`}>
+    <div className={`die ${rolling?'animate-jitter':''}`} style={{width:'72px'}}>
       {Array.from({length:9}).map((_,i)=>{
-        const show = value && pipMap[value]?.includes(i+1);
+        const show = pipMap[value]?.includes(i+1);
         return <div key={i} className="grid-center">{show ? <div className="pip"></div> : <div className="pip hide"></div>}</div>
       })}
     </div>
@@ -260,15 +259,23 @@ function Toast({ msg, tone }) {
   );
 }
 
-function SuspenseOverlay({ text, durationMs=1200, shake }){
+function LoserReveal({ name, onComplete, durationMs=1600 }){
+  const [showFinal, setShowFinal] = useState(false);
+  useEffect(()=>{
+    const t1 = setTimeout(()=>setShowFinal(true), durationMs * 0.55); // stop jitter to show 1+1
+    const t2 = setTimeout(()=>onComplete?.(), durationMs);
+    return ()=>{ clearTimeout(t1); clearTimeout(t2); }
+  }, [durationMs, onComplete]);
   return (
-    <div className={`fixed inset-0 z-40 suspense-bg grid place-items-center ${shake?'animate-shake':''}`}>
-      <div className="text-center">
-        <div className="headline text-3xl mb-2">Revealing…</div>
-        <div className="opacity-80 mb-4">{text}</div>
-        <div className="w-64 h-2 bg-cream/20 rounded-full overflow-hidden mx-auto">
-          <div className="h-full bg-red" style={{'--bar-ms': `${durationMs}ms`}} className="animate-barGrow"></div>
+    <div className="fixed inset-0 z-40 suspense-bg grid place-items-center">
+      <div className="text-center animate-pop">
+        <div className="headline text-3xl mb-1">Loser</div>
+        <div className="text-xl opacity-90 mb-4">{name}</div>
+        <div className="flex items-center justify-center gap-3 mb-4">
+          <DiceFace value={1} rolling={!showFinal} />
+          <DiceFace value={1} rolling={!showFinal} />
         </div>
+        <div className="text-sm opacity-80">Double ones. See you next round.</div>
       </div>
     </div>
   );
@@ -306,7 +313,7 @@ function Game(){
   const [players, setPlayers] = useState([]);
   const [order, setOrder] = useState([]);
   const [diceCount, setDiceCount] = useState(6);
-  const [phase, setPhase] = useState("setup"); // setup | round | suspense | victory | tiebreak
+  const [phase, setPhase] = useState("setup"); // setup | round | tiebreak | eliminate | victory
   const [current, setCurrent] = useState(0);
   const [round, setRound] = useState(1);
   const [lastRoundScores, setLastRoundScores] = useState({});
@@ -320,12 +327,14 @@ function Game(){
   const [inFlag, setInFlag] = useState(false);
   const [turnScore, setTurnScore] = useState(0);
 
-  // REROLL GATE: must increase held count between rolls
+  // REROLL GATE
   const [lastHeldCount, setLastHeldCount] = useState(0);
 
-  // tiebreaker
+  // tie + elimination reveal
   const [tieGroup, setTieGroup] = useState([]);
   const [tieScores, setTieScores] = useState({});
+  const [loserIdx, setLoserIdx] = useState(null);
+  const [pendingNextOrder, setPendingNextOrder] = useState([]);
 
   // pageantry
   const [toast, setToast] = useState({msg:"", tone:"info"});
@@ -356,24 +365,20 @@ function Game(){
     setInFlag(false);
     setTurnScore(0);
     setRolling(false);
-    setLastHeldCount(0); // reset gate for new turn
+    setLastHeldCount(0);
   }
 
   function roll(){
     const heldCount = held.filter(Boolean).length;
-
-    // Hard runtime guard
     if(!firstRoll && heldCount <= lastHeldCount){
       showToast("Hold at least one new die", "warn", 1000);
       return;
     }
-
     setRolling(true);
     setTimeout(()=>{
       setDice(prev => prev.map((v,i)=> held[i] ? v : randInt(1,6)));
       setFirstRoll(false);
       setRolling(false);
-      // Update the baseline AFTER dice resolve
       setLastHeldCount(held.filter(Boolean).length);
     }, 700);
   }
@@ -411,8 +416,8 @@ function Game(){
       const minScore = Math.min(...scores.map(x=>x.s));
       const lowest = scores.filter(x=>x.s===minScore).map(x=>x.i);
 
+      // next round order based on scores (highest last)
       const newOrder = sortOrderByRoundScores(players, newRoundScores);
-      setOrder(newOrder);
 
       if(lowest.length>1){
         setTieGroup(lowest);
@@ -422,23 +427,11 @@ function Game(){
         resetTurnFor(lowest[0]);
       } else {
         const outIdx = lowest[0];
-        setPhase("suspense");
-        setTimeout(()=>{
-          const nextOrder = scores.filter(x => x.i !== outIdx).sort((a,b)=>a.s - b.s).map(x => x.i);
-          setOrder(nextOrder);
-          setPlayers(prev=>{ const copy=[...prev]; copy[outIdx] = { ...copy[outIdx], eliminated:true }; return copy; });
-
-          const remaining = nextOrder.length;
-          if(remaining<=1){
-            setPhase("victory");
-          } else {
-            setRound(r=>r+1);
-            setLastRoundScores({});
-            setPhase("round");
-            showToast(`Round ${round+1}`, "info", 900);
-            resetTurnFor(nextOrder[0]);
-          }
-        }, 1200);
+        // Build next order excluding loser; store for after reveal
+        const nextOrder = scores.filter(x => x.i !== outIdx).sort((a,b)=>a.s - b.s).map(x => x.i);
+        setPendingNextOrder(nextOrder);
+        setLoserIdx(outIdx);
+        setPhase("eliminate");  // Show animated loser reveal
       }
     } else {
       resetTurnFor(nextIdx);
@@ -461,30 +454,43 @@ function Game(){
       const cand = items.filter(x=>x.s===minS).map(x=>x.i);
       if(cand.length===1){
         const eliminatedIdx = cand[0];
-        setPhase("suspense");
-        setTimeout(()=>{
-          setPlayers(prev=>{ const copy=[...prev]; copy[eliminatedIdx] = { ...copy[eliminatedIdx], eliminated:true }; return copy; });
-          const nextOrder = order.filter(i => i !== eliminatedIdx)
-                                 .map(i => ({ i, score: lastRoundScores[i] ?? 0 }))
-                                 .sort((a,b)=>a.score - b.score)
-                                 .map(x=>x.i);
-          setOrder(nextOrder);
-          if (nextOrder.length <= 1) {
-            setPhase("victory");
-          } else {
-            setRound(r=>r+1);
-            setLastRoundScores({});
-            setPhase("round");
-            showToast(`Round ${round+1}`, "info", 900);
-            resetTurnFor(nextOrder[0]);
-          }
-        }, 1000);
+        const nextOrder = order
+          .filter(i => i !== eliminatedIdx)
+          .map(i => ({ i, score: lastRoundScores[i] ?? 0 }))
+          .sort((a,b)=>a.score - b.score)
+          .map(x=>x.i);
+        setPendingNextOrder(nextOrder);
+        setLoserIdx(eliminatedIdx);
+        setPhase("eliminate");
       } else {
         setTieGroup(cand);
         setTieScores({});
         resetTurnFor(cand[0]);
       }
     }
+  }
+
+  function completeElimination(){
+    if (loserIdx == null) return;
+    setPlayers(prev=>{
+      const copy=[...prev];
+      copy[loserIdx] = { ...copy[loserIdx], eliminated:true };
+      return copy;
+    });
+    const nextOrder = pendingNextOrder || [];
+    setOrder(nextOrder);
+
+    if (nextOrder.length <= 1) {
+      setPhase("victory");
+    } else {
+      setRound(r=>r+1);
+      setLastRoundScores({});
+      setPhase("round");
+      showToast(`Round ${round+1}`, "info", 900);
+      resetTurnFor(nextOrder[0]);
+    }
+    setLoserIdx(null);
+    setPendingNextOrder([]);
   }
 
   function onReset(){
@@ -502,6 +508,8 @@ function Game(){
     setFirstRoll(true);
     setTurnDone(false);
     setLastHeldCount(0);
+    setLoserIdx(null);
+    setPendingNextOrder([]);
     setToast({msg:""});
   }
 
@@ -543,13 +551,15 @@ function Game(){
 
           <div className="mt-4 grid grid-cols-5 sm:grid-cols-6 gap-2">
             {dice.map((v,i)=>(
-              <Dice key={i}
-                value={v}
-                held={held[i]}
-                empty={v===null}
-                rolling={rolling}
-                onToggle={()=>toggleHold(i)}
-              />
+              <div key={i} onClick={()=>toggleHold(i)}>
+                <div className={`die ${held[i]?'held':''} ${v===null?'empty':''} ${rolling?'animate-jitter':''} cursor-pointer select-none`}>
+                  {Array.from({length:9}).map((_,ii)=>{
+                    const pipMap = {1:[5],2:[1,9],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9]};
+                    const show = v && pipMap[v]?.includes(ii+1);
+                    return <div key={ii} className="grid-center">{show ? <div className="pip"></div> : <div className="pip hide"></div>}</div>
+                  })}
+                </div>
+              </div>
             ))}
           </div>
 
@@ -603,10 +613,18 @@ function Game(){
         </div>
       </div>
 
-      {phase==="suspense" && <SuspenseOverlay text="Lowest score will be eliminated." durationMs={1200} shake />}
+      {phase==="eliminate" && (
+        <LoserReveal
+          name={players[loserIdx]?.name ?? "Player"}
+          onComplete={completeElimination}
+          durationMs={1600}
+        />
+      )}
+
       {phase==="victory" && (
         <Victory winner={players.find(p=>!p.eliminated) ?? {name:"Winner"}} onReset={onReset} />
       )}
+
       <Toast msg={toast.msg} tone={toast.tone} />
     </div>
   );
