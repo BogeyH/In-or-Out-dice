@@ -259,13 +259,35 @@ function Toast({ msg, tone }) {
   );
 }
 
-function LoserReveal({ name, onComplete, durationMs=1600 }){
+/* UPDATED LOSER REVEAL:
+   - Dice roll (jitter) for ~2s, then land on 1.
+   - Screen stays up longer.
+   - Type out "better luck next time {Player}" beneath dice. */
+function LoserReveal({ name, onComplete, rollMs=2000, totalMs=5200 }){
   const [showFinal, setShowFinal] = useState(false);
+  const [typed, setTyped] = useState("");
+
   useEffect(()=>{
-    const t1 = setTimeout(()=>setShowFinal(true), durationMs * 0.55); // stop jitter to show 1+1
-    const t2 = setTimeout(()=>onComplete?.(), durationMs);
-    return ()=>{ clearTimeout(t1); clearTimeout(t2); }
-  }, [durationMs, onComplete]);
+    const message = `better luck next time ${name}`;
+    // Stop rolling and show double ones at ~2s
+    const t1 = setTimeout(()=>setShowFinal(true), rollMs);
+
+    // Start typing right after dice land
+    const tTypeStart = setTimeout(()=>{
+      let i = 0;
+      const iv = setInterval(()=>{
+        i++;
+        setTyped(message.slice(0, i));
+        if(i >= message.length) clearInterval(iv);
+      }, 65); // typing speed
+    }, rollMs + 150);
+
+    // Keep the screen longer, then continue
+    const t2 = setTimeout(()=>onComplete?.(), totalMs);
+
+    return ()=>{ clearTimeout(t1); clearTimeout(tTypeStart); clearTimeout(t2); };
+  }, [name, rollMs, totalMs, onComplete]);
+
   return (
     <div className="fixed inset-0 z-40 suspense-bg grid place-items-center">
       <div className="text-center animate-pop">
@@ -275,7 +297,7 @@ function LoserReveal({ name, onComplete, durationMs=1600 }){
           <DiceFace value={1} rolling={!showFinal} />
           <DiceFace value={1} rolling={!showFinal} />
         </div>
-        <div className="text-sm opacity-80">Double ones. See you next round.</div>
+        <div className="text-sm opacity-90 mt-1">{typed}</div>
       </div>
     </div>
   );
@@ -617,7 +639,8 @@ function Game(){
         <LoserReveal
           name={players[loserIdx]?.name ?? "Player"}
           onComplete={completeElimination}
-          durationMs={1600}
+          rollMs={2000}   <!-- dice roll effect length -->
+          totalMs={5200}  <!-- loser screen duration -->
         />
       )}
 
@@ -643,3 +666,4 @@ root.render(<App/>);
   </script>
 </body>
 </html>
+
